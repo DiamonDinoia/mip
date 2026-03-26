@@ -1,0 +1,31 @@
+function [org, channelName, name] = resolve_package_name(packageArg, defaultChannel)
+%RESOLVE_PACKAGE_NAME   Resolve a package argument to org/channel/name.
+%
+% Handles both fully qualified names and bare names (with channel context).
+%
+% Args:
+%   packageArg     - Package string: 'name' or 'org/channel/name'
+%   defaultChannel - Default channel string (e.g. 'core', 'owner/chan')
+%                    Used when packageArg is a bare name.
+%
+% Returns:
+%   org         - Organization name
+%   channelName - Channel name
+%   name        - Package name
+
+if nargin < 2 || isempty(defaultChannel)
+    defaultChannel = 'core';
+end
+
+result = mip.utils.parse_package_arg(packageArg);
+
+if result.is_fqn
+    org = result.org;
+    channelName = result.channel;
+    name = result.name;
+else
+    [org, channelName] = mip.utils.parse_channel_spec(defaultChannel);
+    name = result.name;
+end
+
+end

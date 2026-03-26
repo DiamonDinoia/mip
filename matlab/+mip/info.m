@@ -3,7 +3,9 @@ function info(varargin)
 %
 % Usage:
 %   mip.info('packageName')
+%   mip.info('org/channel/packageName')
 %   mip.info('--channel', 'dev', 'packageName')
+%   mip.info('--channel', 'owner/chan', 'packageName')
 %
 % Options:
 %   --channel <name>  Query a specific channel (default: core)
@@ -11,9 +13,6 @@ function info(varargin)
 % Displays detailed information about a package from the repository,
 % including all available versions, installation status, loaded status,
 % dependencies, and exposed symbols (if installed).
-%
-% Example:
-%   mip.info('chebfun')
 
 if nargin < 1
     error('mip:noPackage', 'Package name is required');
@@ -25,49 +24,60 @@ if isempty(args)
     error('mip:noPackage', 'Package name is required');
 end
 
-packageName = args{1};
-if isstring(packageName)
-    packageName = char(packageName);
+packageArg = args{1};
+if isstring(packageArg)
+    packageArg = char(packageArg);
+end
+
+% Determine channel from FQN or flag
+if isempty(channel)
+    channel = 'core';
+end
+
+[org, channelName, packageName] = mip.utils.resolve_package_name(packageArg, channel);
+fqn = mip.utils.make_fqn(org, channelName, packageName);
+
+% Reconstruct channel string for index lookup
+if strcmp(org, 'mip-org')
+    channelStr = channelName;
+else
+    channelStr = [org '/' channelName];
 end
 
 try
-    % Download and parse package index
-    indexUrl = mip.index(channel);
-    if ~isempty(channel)
-        fprintf('Using channel: %s\n', channel);
-    end
+    indexUrl = mip.index(channelStr);
+    fprintf('Using channel: %s/%s\n', org, channelName);
     tempFile = [tempname, '.json'];
     websave(tempFile, indexUrl);
     indexJson = fileread(tempFile);
     delete(tempFile);
-    
+
     index = jsondecode(indexJson);
-    
+
     % Get current architecture
     currentArch = mip.arch();
-    
+
     % Find all variants of this package in the repository
     packages = index.packages;
     packageVariants = {};
-    
+
     for i = 1:length(packages)
-        % Handle both cell arrays and struct arrays
         if iscell(packages)
             pkg = packages{i};
         else
             pkg = packages(i);
         end
-        
+
         if isstruct(pkg) && strcmp(pkg.name, packageName)
             packageVariants = [packageVariants, {pkg}]; %#ok<*AGROW>
         end
     end
-    
+
     if isempty(packageVariants)
         error('mip:packageNotFound', ...
               'Package "%s" not found in repository', packageName);
     end
-    
+
     % Group variants by version
     versionMap = containers.Map('KeyType', 'char', 'ValueType', 'any');
     for i = 1:length(packageVariants)
@@ -79,16 +89,16 @@ try
         variants = versionMap(version);
         versionMap(version) = [variants, {variant}];
     end
-    
+
     % Get all versions (sorted by version number)
     allVersions = keys(versionMap);
     allVersions = sortVersions(allVersions);
-    
+
     % Find compatible variant for current architecture (latest version)
     latestVersion = allVersions{end};
     latestVariants = versionMap(latestVersion);
     compatibleVariant = [];
-    
+
     for i = 1:length(latestVariants)
         v = latestVariants{i};
         arch = v.architecture;
@@ -97,12 +107,11 @@ try
             break;
         end
     end
-    
-    % Check if package is installed
-    packagesDir = mip.utils.get_packages_dir();
-    pkgDir = fullfile(packagesDir, packageName);
+
+    % Check if package is installed (namespaced directory)
+    pkgDir = mip.utils.get_package_dir(org, channelName, packageName);
     isInstalled = exist(pkgDir, 'dir');
-    
+
     installedVersion = '';
     installedInfo = [];
     if isInstalled
@@ -111,44 +120,39 @@ try
             installedVersion = installedInfo.version;
         end
     end
-    
+
     % Check if package is loaded
-    isLoaded = mip.utils.is_loaded(packageName);
-    isSticky = mip.utils.is_sticky(packageName);
-    
+    isLoaded = mip.utils.is_loaded(fqn);
+    isSticky = mip.utils.is_sticky(fqn);
+
     % Display package information
     fprintf('\n');
     fprintf('=== Package Information ===\n\n');
-    fprintf('Name: %s\n', packageName);
-    
+    fprintf('Name: %s\n', fqn);
+
     % Show available versions
     fprintf('\nAvailable Versions:\n');
     for i = 1:length(allVersions)
         version = allVersions{i};
         variants = versionMap(version);
-        
-        % Get architectures for this version
+
         archs = {};
         for j = 1:length(variants)
             archs = [archs, {variants{j}.architecture}];
         end
-        
+
         fprintf('  - %s (%s)\n', version, strjoin(archs, ', '));
     end
-    
+
     % Show installation status
     fprintf('\n');
     if isInstalled
         fprintf('Installed: Yes (version %s)\n', installedVersion);
         fprintf('Installation Path: %s\n', pkgDir);
-        installedChannel = mip.utils.get_package_channel(packageName);
-        if ~isempty(installedChannel)
-            fprintf('Channel: %s\n', installedChannel);
-        end
     else
         fprintf('Installed: No\n');
     end
-    
+
     % Show loaded status
     if isLoaded
         if isSticky
@@ -159,10 +163,8 @@ try
     else
         fprintf('Loaded: No\n');
     end
-    
+
     % Show dependencies
-    % If installed, show dependencies of installed version
-    % Otherwise, show dependencies of latest version
     fprintf('\n');
     if isInstalled && isfield(installedInfo, 'dependencies') && ~isempty(installedInfo.dependencies)
         fprintf('Dependencies (installed version):\n');
@@ -185,7 +187,7 @@ try
     else
         fprintf('Dependencies: None\n');
     end
-    
+
     % Show exposed symbols only if installed
     if isInstalled
         if isfield(installedInfo, 'exposed_symbols') && ~isempty(installedInfo.exposed_symbols)
@@ -204,9 +206,9 @@ try
             fprintf('\nExposed Symbols: None listed\n');
         end
     end
-    
+
     fprintf('\n');
-    
+
 catch ME
     if strcmp(ME.identifier, 'mip:packageNotFound')
         rethrow(ME);
@@ -219,10 +221,8 @@ end
 end
 
 function sorted = sortVersions(versions)
-% Sort version strings by version number (ascending)
     n = length(versions);
     sorted = versions;
-    % Simple insertion sort using compare_versions
     for i = 2:n
         key = sorted{i};
         j = i - 1;

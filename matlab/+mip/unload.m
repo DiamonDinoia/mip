@@ -3,85 +3,126 @@ function unload(varargin)
 %
 % Usage:
 %   mip.unload('packageName')
+%   mip.unload('org/channel/packageName')
 %   mip.unload('--all')
-%   mip.unload('--all', '--force')  % force unload (including sticky packages)
+%   mip.unload('--all', '--force')
 %
-% This function unloads the specified package by executing its
-% unload_package.m file (if it exists) and then prunes any packages that
-% are no longer needed (packages that were loaded as dependencies
-% but are not dependencies of any directly loaded package).
-%
+% Accepts both bare package names and fully qualified names.
 % Use '--all' to unload all non-sticky packages.
 % Use '--all --force' to unload all packages including sticky ones.
 
     % Check for --all and --force flags
     hasAll = any(strcmp(varargin, '--all'));
     hasForce = any(strcmp(varargin, '--force'));
-    
+
     % Handle --all flag
     if hasAll
         unloadAll(hasForce);
         return
     end
-    
+
     % Get package name (first non-flag argument)
-    packageName = '';
+    packageArg = '';
     for i = 1:length(varargin)
         if ~startsWith(varargin{i}, '--')
-            packageName = varargin{i};
+            packageArg = varargin{i};
             break;
         end
     end
-    
-    if isempty(packageName)
+
+    if isempty(packageArg)
         error('mip:noPackage', 'No package name specified for unload command.');
     end
 
+    % Resolve to FQN
+    fqn = resolveLoadedFqn(packageArg);
+
     % mip cannot be unloaded
-    if strcmp(packageName, 'mip')
+    if strcmp(fqn, 'mip')
         error('mip:cannotUnloadMip', 'Cannot unload mip itself.');
     end
 
     % Check if package is loaded
-    if ~mip.utils.is_loaded(packageName)
-        fprintf('Package "%s" is not currently loaded\n', packageName);
+    if ~mip.utils.is_loaded(fqn)
+        fprintf('Package "%s" is not currently loaded\n', fqn);
         return
     end
 
-    % Get the mip packages directory
-    packagesDir = mip.utils.get_packages_dir();
-    packageDir = fullfile(packagesDir, packageName);
+    % Get package directory
+    result = mip.utils.parse_package_arg(fqn);
+    packageDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
 
     % Execute unload_package.m if it exists
-    executeUnload(packageDir, packageName);
+    executeUnload(packageDir, fqn);
 
     % Remove from sticky packages
-    mip.utils.key_value_remove('MIP_STICKY_PACKAGES', packageName);
+    mip.utils.key_value_remove('MIP_STICKY_PACKAGES', fqn);
 
     % Remove from directly loaded packages
-    mip.utils.key_value_remove('MIP_DIRECTLY_LOADED_PACKAGES', packageName);
+    mip.utils.key_value_remove('MIP_DIRECTLY_LOADED_PACKAGES', fqn);
 
     % Remove from loaded packages
-    mip.utils.key_value_remove('MIP_LOADED_PACKAGES', packageName);
+    mip.utils.key_value_remove('MIP_LOADED_PACKAGES', fqn);
 
-    fprintf('Unloaded package "%s"\n', packageName);
+    fprintf('Unloaded package "%s"\n', fqn);
 
     % Prune packages that are no longer needed
-    pruneUnusedPackages(packagesDir);
+    pruneUnusedPackages();
 end
 
-function executeUnload(packageDir, packageName)
-    % Execute unload_package.m for a package if it exists
+function fqn = resolveLoadedFqn(packageArg)
+% Resolve a package argument to its FQN among loaded packages.
+
+    if strcmp(packageArg, 'mip')
+        fqn = 'mip';
+        return
+    end
+
+    result = mip.utils.parse_package_arg(packageArg);
+
+    if result.is_fqn
+        fqn = packageArg;
+        return
+    end
+
+    % Search loaded packages for a bare name match
+    loadedPackages = mip.utils.key_value_get('MIP_LOADED_PACKAGES');
+    matches = {};
+    for i = 1:length(loadedPackages)
+        loaded = loadedPackages{i};
+        r = mip.utils.parse_package_arg(loaded);
+        if r.is_fqn && strcmp(r.name, result.name)
+            matches{end+1} = loaded; %#ok<AGROW>
+        end
+    end
+
+    if isempty(matches)
+        fqn = result.name;  % Return bare name; caller will handle "not loaded"
+        return
+    end
+
+    % Prefer mip-org/core
+    for i = 1:length(matches)
+        if startsWith(matches{i}, 'mip-org/core/')
+            fqn = matches{i};
+            return
+        end
+    end
+
+    matches = sort(matches);
+    fqn = matches{1};
+end
+
+function executeUnload(packageDir, fqn)
     unloadFile = fullfile(packageDir, 'unload_package.m');
 
     if ~exist(unloadFile, 'file')
         warning('mip:unloadNotFound', ...
                 'Package "%s" does not have a unload_package.m file. Path changes may persist.', ...
-                packageName);
+                fqn);
         return
     end
 
-    % Execute the unload_package.m file
     originalDir = pwd;
     cd(packageDir);
     try
@@ -89,16 +130,13 @@ function executeUnload(packageDir, packageName)
     catch ME
         warning('mip:unloadError', ...
                 'Error executing unload_package.m for package "%s": %s', ...
-                packageName, ME.message);
+                fqn, ME.message);
     end
     cd(originalDir);
 end
 
-function pruneUnusedPackages(packagesDir)
-% Prune packages that are no longer needed
-% A package is needed if it is:
-% 1. Directly loaded by the user, OR
-% 2. A dependency of a directly loaded package
+function pruneUnusedPackages()
+% Prune packages that are no longer needed.
 
     MIP_LOADED_PACKAGES          = mip.utils.key_value_get('MIP_LOADED_PACKAGES');
     MIP_DIRECTLY_LOADED_PACKAGES = mip.utils.key_value_get('MIP_DIRECTLY_LOADED_PACKAGES');
@@ -111,7 +149,7 @@ function pruneUnusedPackages(packagesDir)
     neededPackages = {};
     for i = 1:length(MIP_DIRECTLY_LOADED_PACKAGES)
         directPkg = MIP_DIRECTLY_LOADED_PACKAGES{i};
-        neededPackages = [neededPackages, getAllDependencies(directPkg, packagesDir)]; %#ok<*AGROW>
+        neededPackages = [neededPackages, getAllDependencies(directPkg)]; %#ok<*AGROW>
     end
 
     % Add directly loaded packages themselves
@@ -131,26 +169,32 @@ function pruneUnusedPackages(packagesDir)
         fprintf('Pruning unnecessary packages: %s\n', strjoin(packagesToPrune, ', '));
         for i = 1:length(packagesToPrune)
             pkg = packagesToPrune{i};
-            packageDir = fullfile(packagesDir, pkg);
+            r = mip.utils.parse_package_arg(pkg);
+            if r.is_fqn
+                packageDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+            else
+                continue  % Skip non-FQN entries (shouldn't happen)
+            end
 
-            % Execute unload_package.m
             executeUnload(packageDir, pkg);
-
-            % Remove from loaded packages
             mip.utils.key_value_remove('MIP_LOADED_PACKAGES', pkg);
             fprintf('  Pruned package "%s"\n', pkg);
         end
     end
-    
+
     % After pruning, check for broken dependencies
-    checkForBrokenDependencies(packagesDir);
+    checkForBrokenDependencies();
 end
 
-function deps = getAllDependencies(packageName, packagesDir)
-    % Recursively get all dependencies of a package
+function deps = getAllDependencies(fqn)
     deps = {};
 
-    packageDir = fullfile(packagesDir, packageName);
+    result = mip.utils.parse_package_arg(fqn);
+    if ~result.is_fqn
+        return
+    end
+
+    packageDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
     mipJsonPath = fullfile(packageDir, 'mip.json');
 
     if ~exist(mipJsonPath, 'file')
@@ -158,20 +202,37 @@ function deps = getAllDependencies(packageName, packagesDir)
     end
 
     try
-        % Read and parse mip.json
         fid = fopen(mipJsonPath, 'r');
         jsonText = fread(fid, '*char')';
         fclose(fid);
         mipConfig = jsondecode(jsonText);
 
-        % Get direct dependencies
         if isfield(mipConfig, 'dependencies') && ~isempty(mipConfig.dependencies)
-            for i = 1:length(mipConfig.dependencies)
-                dep = mipConfig.dependencies{i};
-                if ~ismember(dep, deps)
-                    deps{end+1} = dep;
-                    % Recursively get dependencies of this dependency
-                    transitiveDeps = getAllDependencies(dep, packagesDir);
+            depNames = mipConfig.dependencies;
+            if ~iscell(depNames)
+                depNames = {depNames};
+            end
+            for i = 1:length(depNames)
+                dep = depNames{i};
+                % Resolve bare dependency to FQN (same channel first, then core)
+                depResult = mip.utils.parse_package_arg(dep);
+                if depResult.is_fqn
+                    depFqn = dep;
+                else
+                    % Try same channel first
+                    sameDir = mip.utils.get_package_dir(result.org, result.channel, dep);
+                    if exist(sameDir, 'dir')
+                        depFqn = mip.utils.make_fqn(result.org, result.channel, dep);
+                    else
+                        depFqn = mip.utils.resolve_bare_name(dep);
+                        if isempty(depFqn)
+                            continue
+                        end
+                    end
+                end
+                if ~ismember(depFqn, deps)
+                    deps{end+1} = depFqn;
+                    transitiveDeps = getAllDependencies(depFqn);
                     deps = unique([deps, transitiveDeps]);
                 end
             end
@@ -179,53 +240,61 @@ function deps = getAllDependencies(packageName, packagesDir)
     catch ME
         warning('mip:jsonParseError', ...
                 'Could not parse mip.json for package "%s": %s', ...
-                packageName, ME.message);
+                fqn, ME.message);
     end
 end
 
-function checkForBrokenDependencies(packagesDir)
-% Check if any loaded packages now have missing dependencies
-% and warn the user
-
+function checkForBrokenDependencies()
     MIP_LOADED_PACKAGES = mip.utils.key_value_get('MIP_LOADED_PACKAGES');
-    
+
     if isempty(MIP_LOADED_PACKAGES)
         return
     end
 
-    % Check each loaded package for broken dependencies
     brokenDeps = {};
     for i = 1:length(MIP_LOADED_PACKAGES)
         pkg = MIP_LOADED_PACKAGES{i};
-        packageDir = fullfile(packagesDir, pkg);
+        r = mip.utils.parse_package_arg(pkg);
+        if ~r.is_fqn
+            continue
+        end
+
+        packageDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
         mipJsonPath = fullfile(packageDir, 'mip.json');
-        
+
         if ~exist(mipJsonPath, 'file')
             continue
         end
-        
+
         try
-            % Read and parse mip.json
             fid = fopen(mipJsonPath, 'r');
             jsonText = fread(fid, '*char')';
             fclose(fid);
             mipConfig = jsondecode(jsonText);
-            
-            % Check if any dependencies are missing (not loaded)
+
             if isfield(mipConfig, 'dependencies') && ~isempty(mipConfig.dependencies)
-                for j = 1:length(mipConfig.dependencies)
-                    dep = mipConfig.dependencies{j};
-                    if ~mip.utils.is_loaded(dep)
-                        brokenDeps{end+1} = sprintf('Package "%s" depends on "%s" which is no longer loaded', pkg, dep); %#ok<*AGROW>
+                depNames = mipConfig.dependencies;
+                if ~iscell(depNames)
+                    depNames = {depNames};
+                end
+                for j = 1:length(depNames)
+                    dep = depNames{j};
+                    depResult = mip.utils.parse_package_arg(dep);
+                    if depResult.is_fqn
+                        depFqn = dep;
+                    else
+                        depFqn = mip.utils.resolve_bare_name(dep);
+                    end
+                    if isempty(depFqn) || ~mip.utils.is_loaded(depFqn)
+                        brokenDeps{end+1} = sprintf('Package "%s" depends on "%s" which is no longer loaded', pkg, dep); %#ok<AGROW>
                     end
                 end
             end
-        catch ME
-            % Silently ignore parse errors (already warned elsewhere)
+        catch
+            % Silently ignore parse errors
         end
     end
-    
-    % Warn about broken dependencies
+
     if ~isempty(brokenDeps)
         warning('mip:brokenDependencies', ...
                 'Warning: Some loaded packages have missing dependencies:\n  %s', ...
@@ -234,8 +303,6 @@ function checkForBrokenDependencies(packagesDir)
 end
 
 function unloadAll(forceUnload)
-% Unload all non-sticky packages (or all packages if forceUnload is true)
-
     MIP_LOADED_PACKAGES          = mip.utils.key_value_get('MIP_LOADED_PACKAGES');
     MIP_DIRECTLY_LOADED_PACKAGES = mip.utils.key_value_get('MIP_DIRECTLY_LOADED_PACKAGES');
     MIP_STICKY_PACKAGES          = mip.utils.key_value_get('MIP_STICKY_PACKAGES');
@@ -245,25 +312,20 @@ function unloadAll(forceUnload)
         return
     end
 
-    % Get the mip packages directory
-    packagesDir = mip.utils.get_packages_dir();
-
     % Find packages to unload (never unload mip itself)
     packagesToUnload = {};
     if forceUnload
-        % Unload all packages except mip
         for i = 1:length(MIP_LOADED_PACKAGES)
             pkg = MIP_LOADED_PACKAGES{i};
             if ~strcmp(pkg, 'mip')
-                packagesToUnload{end+1} = pkg;
+                packagesToUnload{end+1} = pkg; %#ok<AGROW>
             end
         end
     else
-        % Unload all except sticky packages (mip is always sticky)
         for i = 1:length(MIP_LOADED_PACKAGES)
             pkg = MIP_LOADED_PACKAGES{i};
             if ~ismember(pkg, MIP_STICKY_PACKAGES)
-                packagesToUnload{end+1} = pkg;
+                packagesToUnload{end+1} = pkg; %#ok<AGROW>
             end
         end
     end
@@ -289,33 +351,31 @@ function unloadAll(forceUnload)
     % Unload each package
     for i = 1:length(packagesToUnload)
         pkg = packagesToUnload{i};
-        packageDir = fullfile(packagesDir, pkg);
-
-        % Execute unload_package.m
+        r = mip.utils.parse_package_arg(pkg);
+        if r.is_fqn
+            packageDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+        else
+            packageDir = fullfile(mip.utils.get_packages_dir(), pkg);
+        end
         executeUnload(packageDir, pkg);
         fprintf('  Unloaded package "%s"\n', pkg);
     end
 
     % Update global variables (mip always remains)
     if forceUnload
-        % Remove all packages except mip
         MIP_LOADED_PACKAGES = {'mip'};
         MIP_DIRECTLY_LOADED_PACKAGES = {};
         MIP_STICKY_PACKAGES = {'mip'};
     else
-        % Keep only sticky packages in loaded list
         MIP_LOADED_PACKAGES = MIP_STICKY_PACKAGES;
-        
-        % Keep only sticky packages in directly loaded list
         MIP_DIRECTLY_LOADED_PACKAGES = MIP_DIRECTLY_LOADED_PACKAGES(    ...
             ismember(MIP_DIRECTLY_LOADED_PACKAGES, MIP_STICKY_PACKAGES) ...
         );
     end
-    
+
     mip.utils.key_value_set('MIP_LOADED_PACKAGES', MIP_LOADED_PACKAGES);
     mip.utils.key_value_set('MIP_DIRECTLY_LOADED_PACKAGES', MIP_DIRECTLY_LOADED_PACKAGES);
     mip.utils.key_value_set('MIP_STICKY_PACKAGES', MIP_STICKY_PACKAGES);
-    
-    % Check for broken dependencies among remaining packages
-    checkForBrokenDependencies(packagesDir);
+
+    checkForBrokenDependencies();
 end

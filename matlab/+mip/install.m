@@ -5,17 +5,17 @@ function install(varargin)
 %   mip.install('packageName')
 %   mip.install('package1', 'package2', 'package3')
 %   mip.install('--channel', 'dev', 'packageName')
+%   mip.install('--channel', 'owner/chan', 'packageName')
+%   mip.install('owner/chan/packageName')
 %   mip.install('/path/to/package.mhl')
 %   mip.install('https://example.com/package.mhl')
 %
 % Options:
 %   --channel <name>  Install from a specific channel (default: core)
+%                     Accepts 'core', 'dev', or 'owner/channel'
 %
-% Args:
-%   Package name(s), .mhl file path(s), or URL(s), as strings or char arrays.
-%
-% This function installs packages from the mip repository, local .mhl files,
-% or URLs. Dependencies are automatically resolved and installed.
+% Packages can be specified by bare name or fully qualified name
+% (org/channel/package). Fully qualified names override the --channel flag.
 
     if nargin < 1
         error('mip:install:noPackage', 'At least one package name is required for install command.');
@@ -57,7 +57,7 @@ function install(varargin)
 
     % Handle .mhl file installations
     for i = 1:length(mhlSources)
-        if installFromMhl(mhlSources{i}, packagesDir)
+        if installFromMhl(mhlSources{i}, packagesDir, channel)
             installedCount = installedCount + 1;
         end
     end
@@ -75,124 +75,144 @@ function count = installFromRepository(repoPackages, packagesDir, channel)
 
     count = 0;
 
-    try
-        % Download and parse package index
-        if ~isempty(channel)
-            fprintf('Using channel: %s\n', channel);
-        end
-        fprintf('Fetching package index...\n');
-
-        index = mip.utils.fetch_index(channel);
-
-        % Get current architecture
-        currentArch = mip.arch();
-        fprintf('Detected architecture: %s\n', currentArch);
-
-        % Build package info map
-        [packageInfoMap, unavailablePackages] = mip.utils.build_package_info_map(index);
-
-        % Check if any requested packages are unavailable
-        for i = 1:length(repoPackages)
-            pkgName = repoPackages{i};
-            if ~packageInfoMap.isKey(pkgName)
-                if unavailablePackages.isKey(pkgName)
-                    archs = unavailablePackages(pkgName);
-                    fprintf('\nError: Package "%s" is not available for architecture "%s"\n', ...
-                            pkgName, currentArch);
-                    fprintf('Available architectures: %s\n', strjoin(archs, ', '));
-                    error('mip:packageUnavailable', 'Package not available for this architecture');
-                else
-                    error('mip:packageNotFound', ...
-                          'Package "%s" not found in repository', pkgName);
-                end
-            end
-        end
-
-        % Resolve dependencies
-        if length(repoPackages) == 1
-            fprintf('Resolving dependencies for "%s"...\n', repoPackages{1});
-        else
-            fprintf('Resolving dependencies for %d packages...\n', length(repoPackages));
-        end
-
-        % Build combined dependency graph
-        allRequired = {};
-        for i = 1:length(repoPackages)
-            pkgName = repoPackages{i};
-            installOrder = mip.dependency.build_dependency_graph(pkgName, packageInfoMap);
-            allRequired = [allRequired, installOrder];
-        end
-        allRequired = unique(allRequired, 'stable');
-
-        % Sort topologically
-        allPackagesToInstall = mip.dependency.topological_sort(allRequired, packageInfoMap);
-
-        % Filter out already installed packages
-        toInstall = {};
-        alreadyInstalled = {};
-
-        for i = 1:length(allPackagesToInstall)
-            pkgName = allPackagesToInstall{i};
-            pkgDir = fullfile(packagesDir, pkgName);
-            if exist(pkgDir, 'dir')
-                alreadyInstalled = [alreadyInstalled, {pkgName}];
-            else
-                toInstall = [toInstall, {pkgName}];
-            end
-        end
-
-        % Report already installed packages
-        for i = 1:length(alreadyInstalled)
-            fprintf('Package "%s" is already installed\n', alreadyInstalled{i});
-        end
-
-        % Show installation plan
-        if ~isempty(toInstall)
-            if length(toInstall) == 1
-                fprintf('\nInstallation plan:\n');
-            else
-                fprintf('\nInstallation plan (%d packages):\n', length(toInstall));
-            end
-
-            for i = 1:length(toInstall)
-                pkgName = toInstall{i};
-                pkgInfo = packageInfoMap(pkgName);
-                fprintf('  - %s %s\n', pkgName, pkgInfo.version);
-            end
-            fprintf('\n');
-
-            % Install each package
-            for i = 1:length(toInstall)
-                pkgName = toInstall{i};
-                pkgInfo = packageInfoMap(pkgName);
-                downloadAndInstall(pkgName, pkgInfo, packagesDir);
-                count = count + 1;
-            end
-            
-            % Mark requested packages as directly installed and record channel
-            effectiveChannel = channel;
-            if isempty(effectiveChannel)
-                effectiveChannel = 'core';
-            end
-            for i = 1:length(toInstall)
-                mip.utils.set_package_channel(toInstall{i}, effectiveChannel);
-            end
-            for i = 1:length(repoPackages)
-                mip.utils.add_directly_installed(repoPackages{i});
-            end
-        end
-
-    catch ME
-        rethrow(ME);
+    % Determine effective channel for bare-name packages
+    if isempty(channel)
+        channel = 'core';
     end
+
+    [defaultOrg, defaultChan] = mip.utils.parse_channel_spec(channel);
+
+    fprintf('Using channel: %s/%s\n', defaultOrg, defaultChan);
+    fprintf('Fetching package index...\n');
+
+    % Fetch the primary channel index
+    index = mip.utils.fetch_index(channel);
+
+    % Get current architecture
+    currentArch = mip.arch();
+    fprintf('Detected architecture: %s\n', currentArch);
+
+    % Build package info map for the primary channel
+    [packageInfoMap, unavailablePackages] = mip.utils.build_package_info_map(index);
+
+    % Resolve each package argument to org/channel/name
+    resolvedPackages = {};  % cell array of structs with .org, .channel, .name, .fqn
+    for i = 1:length(repoPackages)
+        pkg = repoPackages{i};
+        [org, ch, name] = mip.utils.resolve_package_name(pkg, channel);
+        s = struct('org', org, 'channel', ch, 'name', name, ...
+                   'fqn', mip.utils.make_fqn(org, ch, name));
+        resolvedPackages{end+1} = s;
+    end
+
+    % Check if any requested packages are unavailable
+    for i = 1:length(resolvedPackages)
+        s = resolvedPackages{i};
+        if ~packageInfoMap.isKey(s.name)
+            if unavailablePackages.isKey(s.name)
+                archs = unavailablePackages(s.name);
+                fprintf('\nError: Package "%s" is not available for architecture "%s"\n', ...
+                        s.name, currentArch);
+                fprintf('Available architectures: %s\n', strjoin(archs, ', '));
+                error('mip:packageUnavailable', 'Package not available for this architecture');
+            else
+                error('mip:packageNotFound', ...
+                      'Package "%s" not found in repository', s.name);
+            end
+        end
+    end
+
+    % Resolve dependencies
+    if length(resolvedPackages) == 1
+        fprintf('Resolving dependencies for "%s"...\n', resolvedPackages{1}.fqn);
+    else
+        fprintf('Resolving dependencies for %d packages...\n', length(resolvedPackages));
+    end
+
+    % Build combined dependency graph (using bare names for index lookup)
+    allRequiredNames = {};
+    for i = 1:length(resolvedPackages)
+        installOrder = mip.dependency.build_dependency_graph(resolvedPackages{i}.name, packageInfoMap);
+        allRequiredNames = [allRequiredNames, installOrder];
+    end
+    allRequiredNames = unique(allRequiredNames, 'stable');
+
+    % Sort topologically
+    allPackagesToInstall = mip.dependency.topological_sort(allRequiredNames, packageInfoMap);
+
+    % Map each bare name to its FQN (all dependencies go to the same channel)
+    toInstallFqns = {};
+    alreadyInstalled = {};
+
+    for i = 1:length(allPackagesToInstall)
+        name = allPackagesToInstall{i};
+        fqn = mip.utils.make_fqn(defaultOrg, defaultChan, name);
+        pkgDir = mip.utils.get_package_dir(defaultOrg, defaultChan, name);
+
+        if exist(pkgDir, 'dir')
+            alreadyInstalled{end+1} = fqn;
+        else
+            % Also check if the dependency is installed from another channel
+            existingFqn = mip.utils.resolve_bare_name(name);
+            if ~isempty(existingFqn)
+                alreadyInstalled{end+1} = existingFqn;
+            else
+                toInstallFqns{end+1} = fqn;
+            end
+        end
+    end
+
+    % Report already installed packages
+    for i = 1:length(alreadyInstalled)
+        fprintf('Package "%s" is already installed\n', alreadyInstalled{i});
+    end
+
+    % Show installation plan
+    if ~isempty(toInstallFqns)
+        if length(toInstallFqns) == 1
+            fprintf('\nInstallation plan:\n');
+        else
+            fprintf('\nInstallation plan (%d packages):\n', length(toInstallFqns));
+        end
+
+        for i = 1:length(toInstallFqns)
+            fqn = toInstallFqns{i};
+            result = mip.utils.parse_package_arg(fqn);
+            pkgInfo = packageInfoMap(result.name);
+            fprintf('  - %s %s\n', fqn, pkgInfo.version);
+        end
+        fprintf('\n');
+
+        % Install each package
+        for i = 1:length(toInstallFqns)
+            fqn = toInstallFqns{i};
+            result = mip.utils.parse_package_arg(fqn);
+            pkgInfo = packageInfoMap(result.name);
+            pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
+            downloadAndInstall(fqn, pkgInfo, pkgDir);
+            count = count + 1;
+        end
+
+        % Mark requested packages as directly installed (using FQN)
+        for i = 1:length(resolvedPackages)
+            s = resolvedPackages{i};
+            mip.utils.add_directly_installed(s.fqn);
+        end
+    end
+
 end
 
-function success = installFromMhl(mhlSource, packagesDir)
+function success = installFromMhl(mhlSource, packagesDir, channel)
 % Install a package from a local .mhl file or URL
 
     success = false;
     tempDir = tempname;
     mkdir(tempDir);
+
+    if isempty(channel)
+        channel = 'core';
+    end
+    [org, channelName] = mip.utils.parse_channel_spec(channel);
 
     try
         % Download or copy the .mhl file
@@ -205,33 +225,40 @@ function success = installFromMhl(mhlSource, packagesDir)
         % Read mip.json to get package name and dependencies
         pkgInfo = mip.utils.read_package_json(extractDir);
         packageName = pkgInfo.name;
+        fqn = mip.utils.make_fqn(org, channelName, packageName);
 
         % Check if package is already installed
-        pkgDir = fullfile(packagesDir, packageName);
+        pkgDir = mip.utils.get_package_dir(org, channelName, packageName);
         if exist(pkgDir, 'dir')
-            fprintf('Package "%s" is already installed\n', packageName);
+            fprintf('Package "%s" is already installed\n', fqn);
             return
         end
 
         % Install dependencies from remote repository if any
         if ~isempty(pkgInfo.dependencies)
             fprintf('\nPackage "%s" has dependencies: %s\n', ...
-                    packageName, strjoin(pkgInfo.dependencies, ', '));
+                    fqn, strjoin(pkgInfo.dependencies, ', '));
             fprintf('Installing dependencies from remote repository...\n');
-            installFromRepository(pkgInfo.dependencies, packagesDir);
+            installFromRepository(pkgInfo.dependencies, packagesDir, channel);
         end
 
         % Install the package
-        fprintf('\nInstalling "%s"...\n', packageName);
+        fprintf('\nInstalling "%s"...\n', fqn);
+
+        % Create parent directories if needed
+        parentDir = fileparts(pkgDir);
+        if ~exist(parentDir, 'dir')
+            mkdir(parentDir);
+        end
 
         % Move extracted files to packages directory
         movefile(extractDir, pkgDir);
 
-        fprintf('Successfully installed "%s"\n', packageName);
-        
+        fprintf('Successfully installed "%s"\n', fqn);
+
         % Mark as directly installed
-        mip.utils.add_directly_installed(packageName);
-        
+        mip.utils.add_directly_installed(fqn);
+
         success = true;
 
     catch ME
@@ -248,11 +275,11 @@ function success = installFromMhl(mhlSource, packagesDir)
     end
 end
 
-function downloadAndInstall(packageName, packageInfo, packagesDir)
+function downloadAndInstall(fqn, packageInfo, pkgDir)
 % Download and install a single package
 
     mhlUrl = packageInfo.mhl_url;
-    fprintf('Downloading %s %s...\n', packageName, packageInfo.version);
+    fprintf('Downloading %s %s...\n', fqn, packageInfo.version);
 
     tempDir = tempname;
     mkdir(tempDir);
@@ -261,11 +288,16 @@ function downloadAndInstall(packageName, packageInfo, packagesDir)
         % Download .mhl file
         mhlPath = mip.utils.download_mhl(mhlUrl, tempDir);
 
+        % Create parent directories if needed
+        parentDir = fileparts(pkgDir);
+        if ~exist(parentDir, 'dir')
+            mkdir(parentDir);
+        end
+
         % Extract to package directory
-        pkgDir = fullfile(packagesDir, packageName);
         mip.utils.extract_mhl(mhlPath, pkgDir);
 
-        fprintf('Successfully installed "%s"\n', packageName);
+        fprintf('Successfully installed "%s"\n', fqn);
 
     catch ME
         % Clean up on error
@@ -281,62 +313,5 @@ function downloadAndInstall(packageName, packageInfo, packagesDir)
     % Clean up temp directory
     if exist(tempDir, 'dir')
         rmdir(tempDir, 's');
-    end
-end
-
-function bestVariant = selectBestVariant(variants, currentArch)
-% Select the best package variant for the current architecture
-
-    if isempty(variants)
-        bestVariant = [];
-        return
-    end
-
-    % Filter to compatible variants (exact match or 'any')
-    compatible = {};
-    for i = 1:length(variants)
-        v = variants{i};
-        % Access architecture field safely
-        if isfield(v, 'architecture')
-            arch = v.architecture;
-        else
-            % Skip variants without architecture field
-            continue
-        end
-
-        if strcmp(arch, currentArch) || strcmp(arch, 'any')
-            compatible = [compatible, {v}];
-        end
-    end
-
-    if isempty(compatible)
-        bestVariant = [];
-        return
-    end
-
-    % Prefer exact architecture matches over 'any'
-    exactMatches = {};
-    for i = 1:length(compatible)
-        v = compatible{i};
-        arch = v.architecture;
-        if strcmp(arch, currentArch)
-            exactMatches = [exactMatches, {v}];
-        end
-    end
-
-    if ~isempty(exactMatches)
-        bestVariant = selectLatest(exactMatches);
-    else
-        bestVariant = selectLatest(compatible);
-    end
-end
-
-function best = selectLatest(variants)
-% Select the variant with the latest version from a list of variants
-    best = variants{1};
-    for i = 2:length(variants)
-        if mip.utils.compare_versions(variants{i}.version, best.version) > 0
-            best = variants{i};
-        end
     end
 end

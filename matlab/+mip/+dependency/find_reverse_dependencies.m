@@ -1,18 +1,14 @@
-function reverseDeps = find_reverse_dependencies(packageName, packagesDir, visited)
+function reverseDeps = find_reverse_dependencies(packageName, visited)
 %FIND_REVERSE_DEPENDENCIES   Find all packages that depend on a given package.
 %
 % Args:
-%   packageName - Name of the package to find reverse dependencies for
-%   packagesDir - Path to the packages directory
+%   packageName - Bare name or FQN of the package to find reverse deps for
 %   visited - (Optional) Cell array of already visited packages
 %
 % Returns:
-%   reverseDeps - Cell array of package names that depend on the given package
-%
-% Example:
-%   deps = mip.dependency.find_reverse_dependencies('mypackage', '~/.mip/packages');
+%   reverseDeps - Cell array of FQNs that depend on the given package
 
-if nargin < 3
+if nargin < 2
     visited = {};
 end
 
@@ -25,28 +21,24 @@ end
 visited = [visited, {packageName}];
 reverseDeps = {};
 
-% Check if packages directory exists
-if ~exist(packagesDir, 'dir')
-    return
-end
+% Get bare name for dependency matching
+result = mip.utils.parse_package_arg(packageName);
+bareName = result.name;
 
 % Scan all installed packages
-dirContents = dir(packagesDir);
+allPackages = mip.utils.list_installed_packages();
 
-for i = 1:length(dirContents)
-    if ~dirContents(i).isdir || startsWith(dirContents(i).name, '.')
-        continue
-    end
-
-    pkgName = dirContents(i).name;
+for i = 1:length(allPackages)
+    fqn = allPackages{i};
 
     % Skip the package itself
-    if strcmp(pkgName, packageName)
+    if strcmp(fqn, packageName)
         continue
     end
 
-    % Read this package's dependencies
-    pkgDir = fullfile(packagesDir, pkgName);
+    r = mip.utils.parse_package_arg(fqn);
+    pkgDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+
     try
         pkgInfo = mip.utils.read_package_json(pkgDir);
         dependencies = pkgInfo.dependencies;
@@ -55,20 +47,17 @@ for i = 1:length(dirContents)
             dependencies = {dependencies};
         end
 
-        % If this package depends on our target package
-        if ismember(packageName, dependencies)
-            reverseDeps = [reverseDeps, {pkgName}]; %#ok<*AGROW>
-            % Recursively find packages that depend on this package
-            transitiveDeps = mip.dependency.find_reverse_dependencies(pkgName, packagesDir, visited);
+        % Check if this package depends on our target (by bare name or FQN)
+        if ismember(bareName, dependencies) || ismember(packageName, dependencies)
+            reverseDeps = [reverseDeps, {fqn}]; %#ok<*AGROW>
+            transitiveDeps = mip.dependency.find_reverse_dependencies(fqn, visited);
             reverseDeps = [reverseDeps, transitiveDeps];
         end
     catch
-        % Ignore packages with missing or invalid mip.json
         continue
     end
 end
 
-% Remove duplicates
 reverseDeps = unique(reverseDeps, 'stable');
 
 end

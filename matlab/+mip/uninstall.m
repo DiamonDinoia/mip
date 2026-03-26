@@ -3,11 +3,10 @@ function uninstall(varargin)
 %
 % Usage:
 %   mip.uninstall('packageName')
-%   mip.uninstall('package1', 'package2', 'package3')
+%   mip.uninstall('org/channel/packageName')
+%   mip.uninstall('package1', 'package2')
 %
-% Args:
-%   Package name(s) to uninstall, as strings or char arrays.
-%
+% Accepts both bare package names and fully qualified names.
 % This function uninstalls packages and then prunes any packages that
 % are no longer needed (packages that were installed as dependencies
 % but are not dependencies of any directly installed package).
@@ -17,33 +16,52 @@ function uninstall(varargin)
               'At least one package name is required for uninstall command.');
     end
 
-    packageNames = varargin;
+    packageArgs = varargin;
 
     % mip cannot be uninstalled via this command
-    if any(strcmp(packageNames, 'mip'))
+    hasMip = false;
+    for i = 1:length(packageArgs)
+        if strcmp(packageArgs{i}, 'mip')
+            hasMip = true;
+            break;
+        end
+    end
+    if hasMip
         fprintf('Cannot uninstall mip via "mip uninstall".\n');
         fprintf('To uninstall mip manually:\n');
         fprintf('  1. Remove the mip directory: %s\n', mip.root());
         fprintf('  2. Remove the mip entry from your MATLAB path (e.g., using pathtool)\n');
-        packageNames = packageNames(~strcmp(packageNames, 'mip'));
-        if isempty(packageNames)
+        packageArgs = packageArgs(~strcmp(packageArgs, 'mip'));
+        if isempty(packageArgs)
             return
         end
     end
 
-    packagesDir = mip.utils.get_packages_dir();
-
-    % Check which requested packages are installed
+    % Resolve all package arguments to FQNs
     notInstalled = {};
-    requestedPackages = {};
+    resolvedPackages = {};
 
-    for i = 1:length(packageNames)
-        pkgName = packageNames{i};
-        pkgDir = fullfile(packagesDir, pkgName);
-        if ~exist(pkgDir, 'dir')
-            notInstalled = [notInstalled, {pkgName}]; %#ok<*AGROW>
+    for i = 1:length(packageArgs)
+        arg = packageArgs{i};
+        result = mip.utils.parse_package_arg(arg);
+
+        if result.is_fqn
+            fqn = arg;
+            pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
         else
-            requestedPackages = [requestedPackages, {pkgName}];
+            fqn = mip.utils.resolve_bare_name(result.name);
+            if isempty(fqn)
+                notInstalled = [notInstalled, {arg}]; %#ok<*AGROW>
+                continue
+            end
+            r = mip.utils.parse_package_arg(fqn);
+            pkgDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+        end
+
+        if ~exist(pkgDir, 'dir')
+            notInstalled = [notInstalled, {arg}];
+        else
+            resolvedPackages = [resolvedPackages, {fqn}];
         end
     end
 
@@ -52,16 +70,15 @@ function uninstall(varargin)
         fprintf('Package "%s" is not installed\n', notInstalled{i});
     end
 
-    % If no valid packages to uninstall, return
-    if isempty(requestedPackages)
+    if isempty(resolvedPackages)
         return
     end
 
     % Confirm uninstallation
-    if length(requestedPackages) == 1
-        response = input(sprintf('Are you sure you want to uninstall "%s"? (y/n): ', requestedPackages{1}), 's');
+    if length(resolvedPackages) == 1
+        response = input(sprintf('Are you sure you want to uninstall "%s"? (y/n): ', resolvedPackages{1}), 's');
     else
-        response = input(sprintf('Are you sure you want to uninstall these %d packages? (y/n): ', length(requestedPackages)), 's');
+        response = input(sprintf('Are you sure you want to uninstall these %d packages? (y/n): ', length(resolvedPackages)), 's');
     end
 
     if ~strcmpi(response, 'y') && ~strcmpi(response, 'yes')
@@ -71,129 +88,145 @@ function uninstall(varargin)
 
     % Uninstall each requested package
     fprintf('\n');
-    for i = 1:length(requestedPackages)
-        pkg = requestedPackages{i};
-        pkgDir = fullfile(packagesDir, pkg);
-        
+    for i = 1:length(resolvedPackages)
+        fqn = resolvedPackages{i};
+        r = mip.utils.parse_package_arg(fqn);
+        pkgDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+
         try
-            fprintf('Uninstalling "%s"...\n', pkg);
+            fprintf('Uninstalling "%s"...\n', fqn);
             rmdir(pkgDir, 's');
-            fprintf('Uninstalled package "%s"\n', pkg);
+            fprintf('Uninstalled package "%s"\n', fqn);
         catch ME
             error('mip:uninstallFailed', ...
-                  'Failed to uninstall package "%s": %s', pkg, ME.message);
+                  'Failed to uninstall package "%s": %s', fqn, ME.message);
         end
-        
-        % Remove from directly installed packages and channel tracking
-        mip.utils.remove_directly_installed(pkg);
-        mip.utils.remove_package_channel(pkg);
+
+        % Remove from directly installed packages
+        mip.utils.remove_directly_installed(fqn);
+
+        % Clean up empty parent directories
+        cleanupEmptyDirs(fullfile(mip.utils.get_packages_dir(), r.org, r.channel));
+        cleanupEmptyDirs(fullfile(mip.utils.get_packages_dir(), r.org));
     end
 
     % Prune packages that are no longer needed
-    pruneUnusedPackages(packagesDir);
+    pruneUnusedPackages();
 end
 
-function pruneUnusedPackages(packagesDir)
-% Prune packages that are no longer needed
-% A package is needed if it is:
-% 1. Directly installed by the user, OR
-% 2. A dependency of a directly installed package
-
-    % Get all installed packages
-    installedPackages = {};
-    if exist(packagesDir, 'dir')
-        dirContents = dir(packagesDir);
-        for i = 1:length(dirContents)
-            if dirContents(i).isdir && ~startsWith(dirContents(i).name, '.')
-                installedPackages{end+1} = dirContents(i).name; %#ok<*AGROW>
-            end
-        end
-    end
-    
-    if isempty(installedPackages)
+function cleanupEmptyDirs(dirPath)
+% Remove directory if it is empty (no subdirectories or files)
+    if ~exist(dirPath, 'dir')
         return
     end
-    
+    contents = dir(dirPath);
+    % Filter out . and ..
+    contents = contents(~ismember({contents.name}, {'.', '..'}));
+    if isempty(contents)
+        rmdir(dirPath);
+    end
+end
+
+function pruneUnusedPackages()
+% Prune packages that are no longer needed
+
+    allInstalled = mip.utils.list_installed_packages();
+
+    if isempty(allInstalled)
+        return
+    end
+
     directlyInstalled = mip.utils.get_directly_installed();
-    
+
     % Build set of all needed packages (directly installed + their dependencies)
     neededPackages = {};
     for i = 1:length(directlyInstalled)
         directPkg = directlyInstalled{i};
-        % Only consider if the package is still installed
-        if ismember(directPkg, installedPackages)
-            neededPackages = [neededPackages, getAllDependencies(directPkg, packagesDir, {})];
+        if ismember(directPkg, allInstalled)
+            neededPackages = [neededPackages, getAllDependencies(directPkg)]; %#ok<AGROW>
         end
     end
-    
-    % Add directly installed packages themselves
+
     neededPackages = unique([directlyInstalled, neededPackages]);
-    
+
     % Find packages to prune (installed but not needed)
     packagesToPrune = {};
-    for i = 1:length(installedPackages)
-        pkg = installedPackages{i};
-        if ~ismember(pkg, neededPackages)
-            packagesToPrune{end+1} = pkg;
+    for i = 1:length(allInstalled)
+        fqn = allInstalled{i};
+        if ~ismember(fqn, neededPackages)
+            packagesToPrune{end+1} = fqn; %#ok<AGROW>
         end
     end
-    
-    % Prune each unnecessary package
+
     if ~isempty(packagesToPrune)
         fprintf('\nPruning unnecessary packages: %s\n', strjoin(packagesToPrune, ', '));
         for i = 1:length(packagesToPrune)
-            pkg = packagesToPrune{i};
-            packageDir = fullfile(packagesDir, pkg);
-            
+            fqn = packagesToPrune{i};
+            r = mip.utils.parse_package_arg(fqn);
+            pkgDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+
             try
-                rmdir(packageDir, 's');
-                mip.utils.remove_package_channel(pkg);
-                fprintf('  Pruned package "%s"\n', pkg);
+                rmdir(pkgDir, 's');
+                fprintf('  Pruned package "%s"\n', fqn);
+                cleanupEmptyDirs(fullfile(mip.utils.get_packages_dir(), r.org, r.channel));
+                cleanupEmptyDirs(fullfile(mip.utils.get_packages_dir(), r.org));
             catch ME
                 warning('mip:pruneFailed', ...
-                        'Failed to prune package "%s": %s', pkg, ME.message);
+                        'Failed to prune package "%s": %s', fqn, ME.message);
             end
         end
     end
-    
+
     % After pruning, check for broken dependencies
-    checkForBrokenDependencies(packagesDir);
+    checkForBrokenDependencies();
 end
 
-function deps = getAllDependencies(packageName, packagesDir, visited)
-    % Recursively get all dependencies of a package
-    % visited: cell array of package names already being processed to prevent infinite recursion
+function deps = getAllDependencies(fqn)
     deps = {};
 
-    % Prevent infinite recursion by tracking visited packages
-    if ismember(packageName, visited)
+    result = mip.utils.parse_package_arg(fqn);
+    if ~result.is_fqn
         return
     end
-    
-    visited = [visited, {packageName}];
 
-    packageDir = fullfile(packagesDir, packageName);
-    mipJsonPath = fullfile(packageDir, 'mip.json');
+    pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
+    mipJsonPath = fullfile(pkgDir, 'mip.json');
 
     if ~exist(mipJsonPath, 'file')
         return
     end
 
     try
-        % Read and parse mip.json
         fid = fopen(mipJsonPath, 'r');
         jsonText = fread(fid, '*char')';
         fclose(fid);
         mipConfig = jsondecode(jsonText);
 
-        % Get direct dependencies
         if isfield(mipConfig, 'dependencies') && ~isempty(mipConfig.dependencies)
-            for i = 1:length(mipConfig.dependencies)
-                dep = mipConfig.dependencies{i};
-                if ~ismember(dep, deps)
-                    deps{end+1} = dep;
-                    % Recursively get dependencies of this dependency
-                    transitiveDeps = getAllDependencies(dep, packagesDir, visited);
+            depNames = mipConfig.dependencies;
+            if ~iscell(depNames)
+                depNames = {depNames};
+            end
+            for i = 1:length(depNames)
+                dep = depNames{i};
+                depResult = mip.utils.parse_package_arg(dep);
+                if depResult.is_fqn
+                    depFqn = dep;
+                else
+                    % Same channel first, then resolve
+                    sameDir = mip.utils.get_package_dir(result.org, result.channel, dep);
+                    if exist(sameDir, 'dir')
+                        depFqn = mip.utils.make_fqn(result.org, result.channel, dep);
+                    else
+                        depFqn = mip.utils.resolve_bare_name(dep);
+                        if isempty(depFqn)
+                            continue
+                        end
+                    end
+                end
+                if ~ismember(depFqn, deps)
+                    deps{end+1} = depFqn; %#ok<AGROW>
+                    transitiveDeps = getAllDependencies(depFqn);
                     deps = unique([deps, transitiveDeps]);
                 end
             end
@@ -201,62 +234,60 @@ function deps = getAllDependencies(packageName, packagesDir, visited)
     catch ME
         warning('mip:jsonParseError', ...
                 'Could not parse mip.json for package "%s": %s', ...
-                packageName, ME.message);
+                fqn, ME.message);
     end
 end
 
-function checkForBrokenDependencies(packagesDir)
-% Check if any installed packages now have missing dependencies
-% and warn the user
+function checkForBrokenDependencies()
+    allInstalled = mip.utils.list_installed_packages();
 
-    % Get all installed packages
-    installedPackages = {};
-    if exist(packagesDir, 'dir')
-        dirContents = dir(packagesDir);
-        for i = 1:length(dirContents)
-            if dirContents(i).isdir && ~startsWith(dirContents(i).name, '.')
-                installedPackages{end+1} = dirContents(i).name; %#ok<*AGROW>
-            end
-        end
-    end
-    
-    if isempty(installedPackages)
+    if isempty(allInstalled)
         return
     end
 
-    % Check each installed package for broken dependencies
     brokenDeps = {};
-    for i = 1:length(installedPackages)
-        pkg = installedPackages{i};
-        packageDir = fullfile(packagesDir, pkg);
-        mipJsonPath = fullfile(packageDir, 'mip.json');
-        
+    for i = 1:length(allInstalled)
+        fqn = allInstalled{i};
+        r = mip.utils.parse_package_arg(fqn);
+        pkgDir = mip.utils.get_package_dir(r.org, r.channel, r.name);
+        mipJsonPath = fullfile(pkgDir, 'mip.json');
+
         if ~exist(mipJsonPath, 'file')
             continue
         end
-        
+
         try
-            % Read and parse mip.json
             fid = fopen(mipJsonPath, 'r');
             jsonText = fread(fid, '*char')';
             fclose(fid);
             mipConfig = jsondecode(jsonText);
-            
-            % Check if any dependencies are missing (not installed)
+
             if isfield(mipConfig, 'dependencies') && ~isempty(mipConfig.dependencies)
-                for j = 1:length(mipConfig.dependencies)
-                    dep = mipConfig.dependencies{j};
-                    if ~ismember(dep, installedPackages)
-                        brokenDeps{end+1} = sprintf('Package "%s" depends on "%s" which is no longer installed', pkg, dep);
+                depNames = mipConfig.dependencies;
+                if ~iscell(depNames)
+                    depNames = {depNames};
+                end
+                for j = 1:length(depNames)
+                    dep = depNames{j};
+                    depResult = mip.utils.parse_package_arg(dep);
+                    if depResult.is_fqn
+                        depR = mip.utils.parse_package_arg(dep);
+                        depDir = mip.utils.get_package_dir(depR.org, depR.channel, depR.name);
+                        if ~exist(depDir, 'dir')
+                            brokenDeps{end+1} = sprintf('Package "%s" depends on "%s" which is not installed', fqn, dep); %#ok<AGROW>
+                        end
+                    else
+                        resolved = mip.utils.resolve_bare_name(dep);
+                        if isempty(resolved)
+                            brokenDeps{end+1} = sprintf('Package "%s" depends on "%s" which is not installed', fqn, dep); %#ok<AGROW>
+                        end
                     end
                 end
             end
-        catch ME
-            % Silently ignore parse errors (already warned elsewhere)
+        catch
         end
     end
-    
-    % Warn about broken dependencies
+
     if ~isempty(brokenDeps)
         warning('mip:brokenDependencies', ...
                 'Warning: Some installed packages have missing dependencies:\n  %s', ...
