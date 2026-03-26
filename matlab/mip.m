@@ -32,7 +32,6 @@ end
 
 % Ensure mip itself is always tracked as a loaded sticky package
 mip.utils.key_value_append('MIP_LOADED_PACKAGES', 'mip');
-mip.utils.key_value_append('MIP_DIRECTLY_LOADED_PACKAGES', 'mip');
 mip.utils.key_value_append('MIP_STICKY_PACKAGES', 'mip');
 
 % Normalize command to lowercase

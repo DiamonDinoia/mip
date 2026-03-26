@@ -128,7 +128,7 @@ function updateSinglePackage(packageName, channelOverride)
 
     % Post-update messages
     if isSelfUpdate
-        fprintf('\nmip has been updated. Please restart MATLAB for the changes to take effect.\n');
+        fprintf('\nmip has been updated to %s.\n', latestVersion);
     elseif wasLoaded
         fprintf('Note: "%s" was loaded. Run "mip unload %s" and "mip load %s" to use the new version.\n', ...
                 packageName, packageName, packageName);

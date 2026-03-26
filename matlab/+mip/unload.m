@@ -300,7 +300,7 @@ function unloadAll(forceUnload)
     if forceUnload
         % Remove all packages except mip
         MIP_LOADED_PACKAGES = {'mip'};
-        MIP_DIRECTLY_LOADED_PACKAGES = {'mip'};
+        MIP_DIRECTLY_LOADED_PACKAGES = {};
         MIP_STICKY_PACKAGES = {'mip'};
     else
         % Keep only sticky packages in loaded list
