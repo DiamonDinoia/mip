@@ -5,19 +5,10 @@ function list()
 %   mip.list()
 %
 % Displays all currently installed packages with their versions.
+% Packages are shown by their fully qualified name (org/channel/package).
 % Loaded packages are shown in a separate section at the top.
 % An asterisk (*) indicates a directly loaded package.
 % [sticky] indicates a sticky package.
-%
-% Example:
-%   mip.list()
-%   % Output:
-%   % === Loaded Packages ===
-%   %  * chebfun (5.7.0) [sticky]
-%   %    dependency1 (1.0.0)
-%   %
-%   % === Other Installed Packages ===
-%   %    package1 (1.2.3)
 
 packagesDir = mip.utils.get_packages_dir();
 
@@ -26,17 +17,10 @@ if ~exist(packagesDir, 'dir')
     return
 end
 
-% Get list of package directories
-dirContents = dir(packagesDir);
-packages = {};
+% Get all installed packages as FQNs
+allPackages = mip.utils.list_installed_packages();
 
-for i = 1:length(dirContents)
-    if dirContents(i).isdir && ~startsWith(dirContents(i).name, '.')
-        packages = [packages, {dirContents(i).name}]; %#ok<AGROW>
-    end
-end
-
-if isempty(packages)
+if isempty(allPackages)
     fprintf('No packages installed yet\n');
     return
 end
@@ -50,18 +34,14 @@ MIP_STICKY_PACKAGES          = mip.utils.key_value_get('MIP_STICKY_PACKAGES');
 loadedPackages = {};
 notLoadedPackages = {};
 
-for i = 1:length(packages)
-    pkgName = packages{i};
-    if ismember(pkgName, MIP_LOADED_PACKAGES)
-        loadedPackages{end+1} = pkgName; %#ok<AGROW>
+for i = 1:length(allPackages)
+    fqn = allPackages{i};
+    if ismember(fqn, MIP_LOADED_PACKAGES)
+        loadedPackages{end+1} = fqn; %#ok<AGROW>
     else
-        notLoadedPackages{end+1} = pkgName; %#ok<AGROW>
+        notLoadedPackages{end+1} = fqn; %#ok<AGROW>
     end
 end
-
-% Sort both lists alphabetically
-loadedPackages = sort(loadedPackages);
-notLoadedPackages = sort(notLoadedPackages);
 
 % Display loaded packages section
 if isempty(loadedPackages)
@@ -69,8 +49,9 @@ if isempty(loadedPackages)
 else
     fprintf('=== Loaded Packages ===\n');
     for i = 1:length(loadedPackages)
-        pkgName = loadedPackages{i};
-        pkgDir = fullfile(packagesDir, pkgName);
+        fqn = loadedPackages{i};
+        result = mip.utils.parse_package_arg(fqn);
+        pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
 
         % Try to read version from mip.json
         version = 'unknown';
@@ -80,33 +61,24 @@ else
                 version = pkgInfo.version;
             end
         catch
-            % Ignore errors reading mip.json
         end
 
         % Check if direct and sticky
-        isDirect = ismember(pkgName, MIP_DIRECTLY_LOADED_PACKAGES);
-        isSticky = ismember(pkgName, MIP_STICKY_PACKAGES);
-        
-        % Build the display line with proper indentation
+        isDirect = ismember(fqn, MIP_DIRECTLY_LOADED_PACKAGES);
+        isSticky = ismember(fqn, MIP_STICKY_PACKAGES);
+
         if isDirect
             prefix = ' *';
         else
             prefix = '  ';
         end
-        
-        pkgLine = sprintf('%s %s (%s)', prefix, pkgName, version);
 
-        % Add channel indicator
-        pkgChannel = mip.utils.get_package_channel(pkgName);
-        if ~isempty(pkgChannel) && ~strcmp(pkgChannel, 'core')
-            pkgLine = sprintf('%s [%s]', pkgLine, pkgChannel);
-        end
+        pkgLine = sprintf('%s %s (%s)', prefix, fqn, version);
 
-        % Add sticky indicator
         if isSticky
             pkgLine = sprintf('%s [sticky]', pkgLine);
         end
-        
+
         fprintf('%s\n', pkgLine);
     end
     fprintf('\n');
@@ -116,8 +88,9 @@ end
 if ~isempty(notLoadedPackages)
     fprintf('=== Other Installed Packages ===\n');
     for i = 1:length(notLoadedPackages)
-        pkgName = notLoadedPackages{i};
-        pkgDir = fullfile(packagesDir, pkgName);
+        fqn = notLoadedPackages{i};
+        result = mip.utils.parse_package_arg(fqn);
+        pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
 
         % Try to read version from mip.json
         version = 'unknown';
@@ -127,18 +100,9 @@ if ~isempty(notLoadedPackages)
                 version = pkgInfo.version;
             end
         catch
-            % Ignore errors reading mip.json
         end
 
-        pkgLine = sprintf('   %s (%s)', pkgName, version);
-
-        % Add channel indicator
-        pkgChannel = mip.utils.get_package_channel(pkgName);
-        if ~isempty(pkgChannel) && ~strcmp(pkgChannel, 'core')
-            pkgLine = sprintf('%s [%s]', pkgLine, pkgChannel);
-        end
-
-        fprintf('%s\n', pkgLine);
+        fprintf('   %s (%s)\n', fqn, version);
     end
 end
 

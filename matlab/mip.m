@@ -4,6 +4,8 @@ function varargout = mip(command, varargin)
 % Usage:
 %   mip install <package> [...]              - Install one or more packages
 %   mip install --channel dev <package>      - Install from a specific channel
+%   mip install --channel owner/chan <pkg>   - Install from a user-hosted channel
+%   mip install owner/chan/package           - Install using fully qualified name
 %   mip update <package> [...]               - Update one or more packages
 %   mip update mip                           - Update mip itself
 %   mip uninstall <package> [...]            - Uninstall one or more packages
@@ -23,12 +25,24 @@ function varargout = mip(command, varargin)
 %   mip help [command]                       - Show help text for command
 %
 % Channels:
-%   The default channel is 'core'. Use --channel <name> to install from or
-%   query other channels (e.g., 'dev' for development/staging packages).
+%   The default channel is 'core' (mip-org/core). Use --channel <name> to
+%   install from or query other channels. Channel formats:
+%     'core'           -> mip-org/core (default)
+%     'dev'            -> mip-org/dev
+%     'owner/channel'  -> user-hosted channel
+%
+% Package names:
+%   Packages can be specified by bare name or fully qualified name:
+%     mip install chebfun                    - from default channel
+%     mip install mip-org/core/chebfun       - fully qualified
+%     mip install --channel mylab/custom pkg - from user channel
 
 if nargin < 1
     command = 'help';
 end
+
+% Run migration if needed (once after upgrade to namespaced layout)
+mip.utils.migrate_layout();
 
 % Ensure mip itself is always tracked as a loaded sticky package
 mip.utils.key_value_append('MIP_LOADED_PACKAGES', 'mip');

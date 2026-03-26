@@ -4,21 +4,26 @@ function avail(varargin)
 % Usage:
 %   mip.avail()
 %   mip.avail('--channel', 'dev')
+%   mip.avail('--channel', 'owner/channel')
 %
 % Options:
 %   --channel <name>  List packages from a specific channel (default: core)
+%                     Accepts 'core', 'dev', or 'owner/channel'
 %
 % Displays an alphabetical list of all available packages in the online
-% repository for the current architecture.
+% repository for the current architecture, shown with fully qualified names.
 
 [channel, ~] = mip.utils.parse_channel_flag(varargin);
 
+if isempty(channel)
+    channel = 'core';
+end
+
+[org, channelName] = mip.utils.parse_channel_spec(channel);
+
 try
-    % Download and parse package index
     indexUrl = mip.index(channel);
-    if ~isempty(channel)
-        fprintf('Using channel: %s\n', channel);
-    end
+    fprintf('Using channel: %s/%s\n', org, channelName);
     tempFile = [tempname, '.json'];
     websave(tempFile, indexUrl);
     indexJson = fileread(tempFile);
@@ -34,7 +39,6 @@ try
     availablePackages = {};
 
     for i = 1:length(packages)
-        % Handle both cell arrays and struct arrays
         if iscell(packages)
             pkg = packages{i};
         else
@@ -42,20 +46,16 @@ try
         end
 
         if isstruct(pkg)
-            % Check if architecture field exists
             if isfield(pkg, 'architecture')
                 arch = pkg.architecture;
             else
-                % Skip packages without architecture field
                 continue
             end
 
-            % Include if architecture matches or is 'any'
             if strcmp(arch, currentArch) || strcmp(arch, 'any')
-                packageName = pkg.name;
-                % Add to list if not already present
-                if ~ismember(packageName, availablePackages)
-                    availablePackages = [availablePackages, {packageName}]; %#ok<AGROW>
+                fqn = mip.utils.make_fqn(org, channelName, pkg.name);
+                if ~ismember(fqn, availablePackages)
+                    availablePackages = [availablePackages, {fqn}]; %#ok<AGROW>
                 end
             end
         end
