@@ -45,8 +45,10 @@ end
 mip.utils.migrate_layout();
 
 % Ensure mip itself is always tracked as a loaded sticky package
-mip.utils.key_value_append('MIP_LOADED_PACKAGES', 'mip');
-mip.utils.key_value_append('MIP_STICKY_PACKAGES', 'mip');
+parts = strsplit(mfilename('fullpath'), filesep);
+mip_fqn = fullfile(parts{end-4:end-2});
+mip.utils.key_value_append('MIP_LOADED_PACKAGES', mip_fqn);
+mip.utils.key_value_append('MIP_STICKY_PACKAGES', mip_fqn);
 
 % Normalize command to lowercase
 command = lower(command);
