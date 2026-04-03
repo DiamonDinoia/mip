@@ -57,6 +57,8 @@ end
 % Mark as directly installed
 mip.utils.add_directly_installed(fqn);
 fprintf('Successfully installed "%s"\n', fqn);
+fprintf('\nTo use this package, run:\n');
+fprintf('  mip load %s\n', packageName);
 
 end
 

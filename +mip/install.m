@@ -109,6 +109,8 @@ function install(varargin)
         fprintf('\nAll packages already installed.\n');
     elseif installedCount > 0
         fprintf('\nSuccessfully installed %d package(s).\n', installedCount);
+        fprintf('\nTo use installed packages, run:\n');
+        fprintf('  mip load <package_name>\n');
     end
 end
 
