@@ -57,8 +57,22 @@ end
 % Mark as directly installed
 mip.utils.add_directly_installed(fqn);
 fprintf('Successfully installed "%s"\n', fqn);
+% Use bare name unless another package with the same name is installed
+allInstalled = mip.utils.list_installed_packages();
+sameNameCount = 0;
+for i = 1:length(allInstalled)
+    r = mip.utils.parse_package_arg(allInstalled{i});
+    if strcmp(r.name, packageName)
+        sameNameCount = sameNameCount + 1;
+    end
+end
+if sameNameCount > 1
+    loadName = fqn;
+else
+    loadName = packageName;
+end
 fprintf('\nTo use this package, run:\n');
-fprintf('  mip load %s\n', packageName);
+fprintf('  mip load %s\n', loadName);
 
 end
 
