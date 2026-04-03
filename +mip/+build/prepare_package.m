@@ -57,7 +57,7 @@ end
 % Strip pre-existing mex binaries
 numStripped = mip.build.strip_mex_binaries(pkgSubdir);
 if numStripped > 0
-    fprintf('Stripped %d pre-existing MEX binary(ies).\n', numStripped);
+    fprintf('Stripping pre-existing MEX binaries...\n');
 end
 
 % Compute addpaths relative to the source subdir
