@@ -79,6 +79,16 @@ else
             pkgLine = sprintf('%s [sticky]', pkgLine);
         end
 
+        % Show editable/local status
+        try
+            if isfield(pkgInfo, 'editable') && pkgInfo.editable
+                pkgLine = sprintf('%s [editable: %s]', pkgLine, pkgInfo.source_path);
+            elseif isfield(pkgInfo, 'install_type') && strcmp(pkgInfo.install_type, 'local')
+                pkgLine = sprintf('%s [local]', pkgLine);
+            end
+        catch
+        end
+
         fprintf('%s\n', pkgLine);
     end
     fprintf('\n');
@@ -94,15 +104,21 @@ if ~isempty(notLoadedPackages)
 
         % Try to read version from mip.json
         version = 'unknown';
+        installSuffix = '';
         try
             pkgInfo = mip.utils.read_package_json(pkgDir);
             if isfield(pkgInfo, 'version')
                 version = pkgInfo.version;
             end
+            if isfield(pkgInfo, 'editable') && pkgInfo.editable
+                installSuffix = sprintf(' [editable: %s]', pkgInfo.source_path);
+            elseif isfield(pkgInfo, 'install_type') && strcmp(pkgInfo.install_type, 'local')
+                installSuffix = ' [local]';
+            end
         catch
         end
 
-        fprintf('   %s (%s)\n', fqn, version);
+        fprintf('   %s (%s)%s\n', fqn, version, installSuffix);
     end
 end
 

@@ -14,7 +14,6 @@ function varargout = mip(command, varargin)
 %   mip unload <package>                     - Unload a package from MATLAB path
 %   mip unload --all                         - Unload all non-sticky packages
 %   mip unload --all --force                 - Unload all packages (including sticky)
-%   mip find-name-collisions                 - Find symbol name collisions
 %   mip arch                                 - Display current architecture tag
 %   mip info <package>                       - Display package information
 %   mip info --channel dev <package>         - Display info from a specific channel
@@ -22,6 +21,7 @@ function varargout = mip(command, varargin)
 %   mip avail --channel dev                  - List packages from a specific channel
 %   mip index                                - Display the mip package index URL
 %   mip version                              - Display mip version
+%   mip bundle <directory> [--output <dir>]   - Build .mhl from local package
 %   mip help [command]                       - Show help text for command
 %
 % Channels:
@@ -86,9 +86,6 @@ switch command
         end
         mip.unload(varargin{:});
 
-    case 'find-name-collisions'
-        mip.find_name_collisions();
-
     case {'architecture', 'arch'}
         fprintf('%s\n', mip.arch());
 
@@ -97,6 +94,12 @@ switch command
             error('mip:noPackage', 'No package specified for info command.');
         end
         mip.info(varargin{:});
+
+    case 'bundle'
+        if nargin < 2
+            error('mip:noDirectory', 'A directory path is required for bundle command.');
+        end
+        mip.bundle(varargin{:});
 
     case 'avail'
         mip.avail(varargin{:});

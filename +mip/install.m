@@ -9,10 +9,19 @@ function install(varargin)
 %   mip.install('owner/chan/packageName')
 %   mip.install('/path/to/package.mhl')
 %   mip.install('https://example.com/package.mhl')
+%   mip.install('/path/to/local/package')          - Install from local directory
+%   mip.install('.', '--editable')                  - Editable install (like pip -e)
+%   mip.install('-e', '/path/to/package')           - Editable install (short form)
 %
 % Options:
-%   --channel <name>  Install from a specific channel (default: core)
-%                     Accepts 'core', 'dev', or 'owner/channel'
+%   --channel <name>    Install from a specific channel (default: core)
+%                       Accepts 'core', 'dev', or 'owner/channel'
+%   --editable, -e      Install in editable mode (local packages only)
+%
+% Local packages:
+%   If the argument is a directory path containing a mip.yaml file,
+%   the package is installed locally. In editable mode, changes to
+%   the source directory are reflected immediately without reinstalling.
 %
 % Packages can be specified by bare name or fully qualified name
 % (org/channel/package). Fully qualified names override the --channel flag.
@@ -21,10 +30,43 @@ function install(varargin)
         error('mip:install:noPackage', 'At least one package name is required for install command.');
     end
 
-    [channel, args] = mip.utils.parse_channel_flag(varargin);
+    % Check for --editable / -e flag
+    editable = false;
+    filteredArgs = {};
+    for i = 1:length(varargin)
+        arg = varargin{i};
+        if ischar(arg) && (strcmp(arg, '--editable') || strcmp(arg, '-e'))
+            editable = true;
+        else
+            filteredArgs{end+1} = arg;
+        end
+    end
+
+    [channel, args] = mip.utils.parse_channel_flag(filteredArgs);
 
     if isempty(args)
         error('mip:install:noPackage', 'At least one package name is required for install command.');
+    end
+
+    % Check if any argument is a local directory with mip.yaml
+    for i = 1:length(args)
+        pkg = args{i};
+        % Resolve '.' and relative paths
+        if exist(pkg, 'dir')
+            mipYamlPath = fullfile(pkg, 'mip.yaml');
+            if exist(mipYamlPath, 'file')
+                mip.utils.install_local(pkg, editable);
+                return;
+            else
+                error('mip:install:noMipYaml', ...
+                      'Directory "%s" does not contain a mip.yaml file.', pkg);
+            end
+        end
+    end
+
+    if editable
+        error('mip:install:editableRequiresLocal', ...
+              '--editable can only be used with local directory packages.');
     end
 
     packageNames = args;
