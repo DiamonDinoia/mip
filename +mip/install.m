@@ -155,21 +155,21 @@ function installedFqns = installFromRepository(repoPackages, ~, channel)
     end
 
     % Build package info map for the primary channel (with version constraints)
-    [packageInfoMap, unavailablePackages] = mip.utils.build_package_info_map(index, requestedVersions);
+    [packageInfoMap, unavailablePackages] = mip.utils.build_package_info_map(index, defaultOrg, defaultChan, requestedVersions);
 
     % Check if any requested packages are unavailable
     for i = 1:length(resolvedPackages)
         s = resolvedPackages{i};
-        if ~packageInfoMap.isKey(s.name)
-            if unavailablePackages.isKey(s.name)
-                archs = unavailablePackages(s.name);
+        if ~packageInfoMap.isKey(s.fqn)
+            if unavailablePackages.isKey(s.fqn)
+                archs = unavailablePackages(s.fqn);
                 fprintf('\nError: Package "%s" is not available for architecture "%s"\n', ...
-                        s.name, currentArch);
+                        s.fqn, currentArch);
                 fprintf('Available architectures: %s\n', strjoin(archs, ', '));
                 error('mip:packageUnavailable', 'Package not available for this architecture');
             else
                 error('mip:packageNotFound', ...
-                      'Package "%s" not found in repository', s.name);
+                      'Package "%s" not found in repository', s.fqn);
             end
         end
     end
@@ -181,41 +181,41 @@ function installedFqns = installFromRepository(repoPackages, ~, channel)
         fprintf('Resolving dependencies for %d packages...\n', length(resolvedPackages));
     end
 
-    % Build combined dependency graph (using bare names for index lookup)
-    allRequiredNames = {};
+    % Build combined dependency graph
+    allRequiredFqns = {};
     for i = 1:length(resolvedPackages)
-        installOrder = mip.dependency.build_dependency_graph(resolvedPackages{i}.name, packageInfoMap);
-        allRequiredNames = [allRequiredNames, installOrder];
+        installOrder = mip.dependency.build_dependency_graph(resolvedPackages{i}.fqn, packageInfoMap, defaultOrg, defaultChan);
+        allRequiredFqns = [allRequiredFqns, installOrder];
     end
-    allRequiredNames = unique(allRequiredNames, 'stable');
+    allRequiredFqns = unique(allRequiredFqns, 'stable');
 
     % Sort topologically
-    allPackagesToInstall = mip.dependency.topological_sort(allRequiredNames, packageInfoMap);
+    allPackagesToInstall = mip.dependency.topological_sort(allRequiredFqns, packageInfoMap, defaultOrg, defaultChan);
 
-    % Build set of requested bare names
-    requestedBareNames = {};
+    % Build set of requested FQNs
+    requestedFqns = {};
     for i = 1:length(resolvedPackages)
-        requestedBareNames{end+1} = resolvedPackages{i}.name;
+        requestedFqns{end+1} = resolvedPackages{i}.fqn;
     end
 
-    % Map each bare name to its FQN (all dependencies go to the same channel)
+    % Determine which packages need installing vs already installed
     toInstallFqns = {};
     alreadyInstalled = {};
 
     for i = 1:length(allPackagesToInstall)
-        name = allPackagesToInstall{i};
-        fqn = mip.utils.make_fqn(defaultOrg, defaultChan, name);
-        pkgDir = mip.utils.get_package_dir(defaultOrg, defaultChan, name);
+        fqn = allPackagesToInstall{i};
+        result = mip.utils.parse_package_arg(fqn);
+        pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
 
         if exist(pkgDir, 'dir')
             alreadyInstalled{end+1} = fqn;
-        elseif ismember(name, requestedBareNames)
+        elseif ismember(fqn, requestedFqns)
             % User explicitly requested this package; install it even if
             % the same name exists on another channel
             toInstallFqns{end+1} = fqn;
         else
             % For dependencies, any channel satisfies the requirement
-            existingFqn = mip.utils.resolve_bare_name(name);
+            existingFqn = mip.utils.resolve_bare_name(result.name);
             if ~isempty(existingFqn)
                 alreadyInstalled{end+1} = existingFqn;
             else
@@ -239,8 +239,7 @@ function installedFqns = installFromRepository(repoPackages, ~, channel)
 
         for i = 1:length(toInstallFqns)
             fqn = toInstallFqns{i};
-            result = mip.utils.parse_package_arg(fqn);
-            pkgInfo = packageInfoMap(result.name);
+            pkgInfo = packageInfoMap(fqn);
             fprintf('  - %s %s\n', fqn, pkgInfo.version);
         end
         fprintf('\n');
@@ -248,8 +247,8 @@ function installedFqns = installFromRepository(repoPackages, ~, channel)
         % Install each package
         for i = 1:length(toInstallFqns)
             fqn = toInstallFqns{i};
+            pkgInfo = packageInfoMap(fqn);
             result = mip.utils.parse_package_arg(fqn);
-            pkgInfo = packageInfoMap(result.name);
             pkgDir = mip.utils.get_package_dir(result.org, result.channel, result.name);
             downloadAndInstall(fqn, pkgInfo, pkgDir);
         end
