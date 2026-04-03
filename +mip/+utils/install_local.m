@@ -42,19 +42,14 @@ if ~isempty(mipConfig.dependencies)
         dep = mipConfig.dependencies{i};
         depResult = mip.utils.parse_package_arg(dep);
         if depResult.is_fqn
-            % FQN dependency: must be installed at that exact location
             depDir = mip.utils.get_package_dir(depResult.org, depResult.channel, depResult.name);
-            if ~exist(depDir, 'dir')
-                error('mip:dependencyNotFound', ...
-                      'Dependency "%s" is not installed. Install it first.', dep);
-            end
         else
-            % Bare name dependency: any channel satisfies it
-            depFqn = mip.utils.resolve_bare_name(dep);
-            if isempty(depFqn)
-                error('mip:dependencyNotFound', ...
-                      'Dependency "%s" is not installed. Install it first.', dep);
-            end
+            % Bare name dependency: resolve to mip-org/core
+            depDir = mip.utils.get_package_dir('mip-org', 'core', depResult.name);
+        end
+        if ~exist(depDir, 'dir')
+            error('mip:dependencyNotFound', ...
+                  'Dependency "%s" is not installed. Install it first.', dep);
         end
     end
 end
