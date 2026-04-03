@@ -74,6 +74,15 @@ end
 fprintf('\nTo use this package, run:\n');
 fprintf('  mip load %s\n', loadName);
 
+% Warn if package exists in multiple channels
+allInstalled = mip.utils.find_all_installed_by_name(packageName);
+if length(allInstalled) > 1
+    fprintf('\nWarning: Package "%s" is installed from multiple channels:\n', packageName);
+    for i = 1:length(allInstalled)
+        fprintf('  - %s\n', allInstalled{i});
+    end
+end
+
 end
 
 
