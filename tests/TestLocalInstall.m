@@ -103,6 +103,24 @@ classdef TestLocalInstall < matlab.unittest.TestCase
             testCase.verifyTrue(contains(info.source_path, testCase.SourceDir));
         end
 
+        function testEditableInstall_PrintsBareLoadHintWhenNameUnique(testCase)
+            srcDir = createTestSourcePackage(testCase.SourceDir, 'mypkg');
+
+            output = evalc('mip.utils.install_local(srcDir, true);');
+
+            testCase.verifyTrue(contains(output, 'mip load mypkg'));
+            testCase.verifyFalse(contains(output, 'mip load local/local/mypkg'));
+        end
+
+        function testEditableInstall_PrintsFqnLoadHintWhenNameDuplicate(testCase)
+            createTestPackage(testCase.TestRoot, 'mip-org', 'core', 'mypkg');
+            srcDir = createTestSourcePackage(testCase.SourceDir, 'mypkg');
+
+            output = evalc('mip.utils.install_local(srcDir, true);');
+
+            testCase.verifyTrue(contains(output, 'mip load local/local/mypkg'));
+        end
+
         function testEditableInstall_UsesLocalLocalChannel(testCase)
             srcDir = createTestSourcePackage(testCase.SourceDir, 'mypkg');
             mip.utils.install_local(srcDir, true);
@@ -146,6 +164,25 @@ classdef TestLocalInstall < matlab.unittest.TestCase
                 'Copy install load script should use relative paths');
         end
 
+        function testInstallMhl_PrintsBareLoadHintWhenNameUnique(testCase)
+            mhlPath = testCase.createTestBundle('bundledpkg');
+
+            output = evalc('mip.install(mhlPath);');
+
+            testCase.verifyTrue(contains(output, 'Successfully installed 1 package(s).'));
+            testCase.verifyTrue(contains(output, 'mip load bundledpkg'));
+            testCase.verifyFalse(contains(output, 'mip load mip-org/core/bundledpkg'));
+        end
+
+        function testInstallMhl_PrintsFqnLoadHintWhenNameDuplicate(testCase)
+            createTestPackage(testCase.TestRoot, 'local', 'local', 'bundledpkg');
+            mhlPath = testCase.createTestBundle('bundledpkg');
+
+            output = evalc('mip.install(mhlPath);');
+
+            testCase.verifyTrue(contains(output, 'mip load mip-org/core/bundledpkg'));
+        end
+
         function testInstallLocal_WithDependency(testCase)
             % Create the dependency as an installed package first
             createTestPackage(testCase.TestRoot, 'mip-org', 'core', 'depA');
@@ -165,5 +202,19 @@ classdef TestLocalInstall < matlab.unittest.TestCase
                 'mip:dependencyNotFound');
         end
 
+    end
+
+    methods (Access = private)
+        function mhlPath = createTestBundle(testCase, pkgName)
+            srcDir = createTestSourcePackage(testCase.SourceDir, pkgName);
+            bundleDir = fullfile(testCase.TestRoot, 'bundles');
+            mkdir(bundleDir);
+
+            evalc('mip.bundle(srcDir, ''--output'', bundleDir);');
+
+            bundles = dir(fullfile(bundleDir, '*.mhl'));
+            testCase.assertEqual(numel(bundles), 1);
+            mhlPath = fullfile(bundles(1).folder, bundles(1).name);
+        end
     end
 end
