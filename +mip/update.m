@@ -6,10 +6,12 @@ function update(varargin)
 %   mip.update('org/channel/packageName')
 %   mip.update('package1', 'package2')
 %   mip.update('--channel', 'dev', 'packageName')
+%   mip.update('--force', 'packageName')
 %   mip.update('mip')
 %
 % Options:
 %   --channel <name>  Use a specific channel (overrides installed channel)
+%   --force           Force update even if already up to date
 %
 % Accepts both bare package names and fully qualified names.
 
@@ -17,18 +19,30 @@ function update(varargin)
         error('mip:update:noPackage', 'At least one package name is required for update command.');
     end
 
-    [channelOverride, args] = mip.utils.parse_channel_flag(varargin);
+    % Check for --force flag
+    force = false;
+    filteredArgs = {};
+    for i = 1:length(varargin)
+        arg = varargin{i};
+        if ischar(arg) && strcmp(arg, '--force')
+            force = true;
+        else
+            filteredArgs{end+1} = arg;
+        end
+    end
+
+    [channelOverride, args] = mip.utils.parse_channel_flag(filteredArgs);
 
     if isempty(args)
         error('mip:update:noPackage', 'At least one package name is required for update command.');
     end
 
     for i = 1:length(args)
-        updateSinglePackage(args{i}, channelOverride);
+        updateSinglePackage(args{i}, channelOverride, force);
     end
 end
 
-function updateSinglePackage(packageArg, channelOverride)
+function updateSinglePackage(packageArg, channelOverride, force)
 
     % Resolve the package to its FQN
     result = mip.utils.parse_package_arg(packageArg);
@@ -125,13 +139,17 @@ function updateSinglePackage(packageArg, channelOverride)
             latestHash = latestInfo.commit_hash;
         end
 
-        if isempty(latestHash) || strcmp(installedHash, latestHash)
+        if ~force && (isempty(latestHash) || strcmp(installedHash, latestHash))
             fprintf('Package "%s" is already up to date (%s)\n', fqn, installedVersion);
             return
         end
 
-        fprintf('Version is "%s" but commit hash has changed (%s -> %s)\n', ...
-                installedVersion, installedHash, latestHash);
+        if ~force
+            fprintf('Version is "%s" but commit hash has changed (%s -> %s)\n', ...
+                    installedVersion, installedHash, latestHash);
+        else
+            fprintf('Force updating "%s" (%s)\n', fqn, installedVersion);
+        end
     end
 
     fprintf('Updating "%s": %s -> %s\n', fqn, installedVersion, latestVersion);
