@@ -10,7 +10,11 @@ if nargin < 2
 end
 
 % Resolve to absolute path
-sourceDir = char(java.io.File(sourceDir).getCanonicalPath());
+w = what(sourceDir);
+if isempty(w)
+    error('mip:install:notADirectory', '"%s" is not a directory.', sourceDir);
+end
+sourceDir = w.path;
 
 % Read mip.yaml to get package name
 mipConfig = mip.utils.read_mip_yaml(sourceDir);

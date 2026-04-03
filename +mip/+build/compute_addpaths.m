@@ -82,8 +82,16 @@ end
 
 function rel = getRelativePath(targetDir, baseDir)
 % Get relative path from baseDir to targetDir.
-    targetDir = char(java.io.File(targetDir).getCanonicalPath());
-    baseDir = char(java.io.File(baseDir).getCanonicalPath());
+    w = what(targetDir);
+    if isempty(w)
+        error('mip:build:notADirectory', '"%s" is not a directory.', targetDir);
+    end
+    targetDir = w.path;
+    w = what(baseDir);
+    if isempty(w)
+        error('mip:build:notADirectory', '"%s" is not a directory.', baseDir);
+    end
+    baseDir = w.path;
     if strcmp(targetDir, baseDir)
         rel = '.';
     elseif startsWith(targetDir, [baseDir filesep])

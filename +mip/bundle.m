@@ -61,7 +61,11 @@ function bundle(varargin)
     if ~exist(sourceDir, 'dir')
         error('mip:bundle:notADirectory', '"%s" is not a directory.', sourceDir);
     end
-    sourceDir = char(java.io.File(sourceDir).getCanonicalPath());
+    w = what(sourceDir);
+    if isempty(w)
+        error('mip:bundle:notADirectory', '"%s" is not a directory.', sourceDir);
+    end
+    sourceDir = w.path;
 
     % Check for mip.yaml
     if ~exist(fullfile(sourceDir, 'mip.yaml'), 'file')
@@ -73,7 +77,11 @@ function bundle(varargin)
     if ~exist(outputDir, 'dir')
         mkdir(outputDir);
     end
-    outputDir = char(java.io.File(outputDir).getCanonicalPath());
+    w = what(outputDir);
+    if isempty(w)
+        error('mip:bundle:notADirectory', '"%s" is not a directory.', outputDir);
+    end
+    outputDir = w.path;
 
     % Prepare in a staging directory
     stagingDir = tempname;
