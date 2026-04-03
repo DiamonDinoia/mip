@@ -1,24 +1,24 @@
-function depList = build_dependency_graph(packageFqn, packageInfoMap, defaultOrg, defaultChannel, visited, path)
+function depList = build_dependency_graph(packageFqn, packageInfoMap, visited, path)
 %BUILD_DEPENDENCY_GRAPH   Recursively build dependency graph for a package.
 %
 % Args:
 %   packageFqn     - Fully qualified package name (org/channel/name)
 %   packageInfoMap - containers.Map of FQN -> package info
-%   defaultOrg     - Default organization for resolving bare-name dependencies
-%   defaultChannel - Default channel for resolving bare-name dependencies
 %   visited        - (Optional) Cell array of already visited FQNs
 %   path           - (Optional) Cell array representing current dependency path
 %
 % Returns:
 %   depList - Cell array of FQNs in dependency order (dependencies first)
 %
+% Bare-name dependencies are always resolved to mip-org/core/<name>.
+%
 % Example:
-%   deps = mip.dependency.build_dependency_graph('mip-org/core/mypackage', pkgMap, 'mip-org', 'core');
+%   deps = mip.dependency.build_dependency_graph('mip-org/core/mypackage', pkgMap);
 
-if nargin < 5
+if nargin < 3
     visited = {};
 end
-if nargin < 6
+if nargin < 4
     path = {};
 end
 
@@ -62,16 +62,16 @@ for i = 1:length(dependencies)
     if depResult.is_fqn
         depFqn = dep;
     else
-        depFqn = mip.utils.make_fqn(defaultOrg, defaultChannel, depResult.name);
+        depFqn = mip.utils.make_fqn('mip-org', 'core', depResult.name);
     end
 
-    % If dep is from a different channel and not in the map, skip it
+    % If dep is not in the map, skip it
     % (cross-channel dependency assumed to be pre-installed)
     if ~isKey(packageInfoMap, depFqn)
         continue
     end
 
-    subDeps = mip.dependency.build_dependency_graph(depFqn, packageInfoMap, defaultOrg, defaultChannel, visited, path);
+    subDeps = mip.dependency.build_dependency_graph(depFqn, packageInfoMap, visited, path);
     depList = [depList, subDeps]; %#ok<*AGROW>
 end
 

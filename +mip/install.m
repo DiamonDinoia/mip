@@ -184,13 +184,13 @@ function installedFqns = installFromRepository(repoPackages, ~, channel)
     % Build combined dependency graph
     allRequiredFqns = {};
     for i = 1:length(resolvedPackages)
-        installOrder = mip.dependency.build_dependency_graph(resolvedPackages{i}.fqn, packageInfoMap, defaultOrg, defaultChan);
+        installOrder = mip.dependency.build_dependency_graph(resolvedPackages{i}.fqn, packageInfoMap);
         allRequiredFqns = [allRequiredFqns, installOrder];
     end
     allRequiredFqns = unique(allRequiredFqns, 'stable');
 
     % Sort topologically
-    allPackagesToInstall = mip.dependency.topological_sort(allRequiredFqns, packageInfoMap, defaultOrg, defaultChan);
+    allPackagesToInstall = mip.dependency.topological_sort(allRequiredFqns, packageInfoMap);
 
     % Build set of requested FQNs
     requestedFqns = {};

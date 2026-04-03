@@ -1,17 +1,17 @@
-function sortedPackages = topological_sort(packageFqns, packageInfoMap, defaultOrg, defaultChannel)
+function sortedPackages = topological_sort(packageFqns, packageInfoMap)
 %TOPOLOGICAL_SORT   Sort packages in topological order (dependencies first).
 %
 % Args:
 %   packageFqns    - Cell array of fully qualified package names to sort
 %   packageInfoMap - containers.Map of FQN -> package info
-%   defaultOrg     - Default organization for resolving bare-name dependencies
-%   defaultChannel - Default channel for resolving bare-name dependencies
 %
 % Returns:
 %   sortedPackages - Cell array of FQNs in topological order
 %
+% Bare-name dependencies are always resolved to mip-org/core/<name>.
+%
 % Example:
-%   sorted = mip.dependency.topological_sort({'mip-org/core/pkg1', 'mip-org/core/pkg2'}, pkgMap, 'mip-org', 'core');
+%   sorted = mip.dependency.topological_sort({'mip-org/core/pkg1', 'mip-org/core/pkg2'}, pkgMap);
 
 if isempty(packageFqns)
     sortedPackages = {};
@@ -66,7 +66,7 @@ sortedPackages = {};
                 if depResult.is_fqn
                     depFqn = dep;
                 else
-                    depFqn = mip.utils.make_fqn(defaultOrg, defaultChannel, depResult.name);
+                    depFqn = mip.utils.make_fqn('mip-org', 'core', depResult.name);
                 end
                 if ismember(depFqn, packageFqns)
                     visit(depFqn);
