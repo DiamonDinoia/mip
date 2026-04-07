@@ -72,18 +72,6 @@ function uninstall(varargin)
         return
     end
 
-    % Confirm uninstallation
-    if length(resolvedPackages) == 1
-        response = input(sprintf('Are you sure you want to uninstall "%s"? (y/n): ', resolvedPackages{1}), 's');
-    else
-        response = input(sprintf('Are you sure you want to uninstall these %d packages? (y/n): ', length(resolvedPackages)), 's');
-    end
-
-    if ~strcmpi(response, 'y') && ~strcmpi(response, 'yes')
-        fprintf('Uninstallation cancelled\n');
-        return
-    end
-
     % Unload any packages that are currently loaded
     for i = 1:length(resolvedPackages)
         fqn = resolvedPackages{i};
