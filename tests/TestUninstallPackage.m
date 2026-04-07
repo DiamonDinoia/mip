@@ -1,8 +1,7 @@
 classdef TestUninstallPackage < matlab.unittest.TestCase
 %TESTUNINSTALLPACKAGE   Tests for mip.uninstall components.
 %
-%   Note: Full mip.uninstall requires interactive user confirmation via
-%   input(). These tests verify the underlying mechanisms (directory removal,
+%   These tests verify the underlying mechanisms (directory removal,
 %   directly_installed tracking, load state cleanup) without calling the
 %   top-level uninstall function.
 
