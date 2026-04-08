@@ -96,6 +96,7 @@ hostLevel = mip.utils.detect_cpu_level();
 if isempty(hostLevel)
     hostLevel = 'x86_64_v1';
 end
+fprintf('Detected host CPU level: %s\n', hostLevel);
 hostRank = find(strcmp(CPU_LEVELS, hostLevel), 1);
 if isempty(hostRank)
     hostRank = 1;
@@ -120,10 +121,14 @@ end
 if isempty(best)
     if ~isempty(nonSimdVariants)
         best = nonSimdVariants{1};
+        fprintf('No matching SIMD variant; using non-SIMD build\n');
     else
         % Last resort: pick lowest SIMD variant (v1)
         best = simdVariants{1};
+        fprintf('No matching SIMD variant; falling back to %s\n', best.cpu_level);
     end
+else
+    fprintf('Selected SIMD variant: %s\n', best.cpu_level);
 end
 
 end
